@@ -19,7 +19,9 @@ export class SessionBuilder {
 
   processPreKeyJob = async (device: DeviceType): Promise<SessionType> => {
     const trusted = await this.storage.isTrustedIdentity(
-      this.remoteAddress.name,
+      this.remoteAddress.name, //getName() is not allowed here cause SignalProtocolAddressType doesn't have it 
+      //but SignalProtocolAddress has it  //TODO:
+      //i don't have the energy to change agian...  
       device.identityKey,
       Direction.SENDING
     )
@@ -65,7 +67,7 @@ export class SessionBuilder {
     record.updateSessionState(session)
     await Promise.all([
       this.storage.storeSession(address, record.serialize()),
-      this.storage.saveIdentity(this.remoteAddress.toString(), session.indexInfo.remoteIdentityKey),
+      this.storage.saveIdentity(this.remoteAddress.name, session.indexInfo.remoteIdentityKey),
     ])
 
     return session
@@ -191,9 +193,9 @@ export class SessionBuilder {
     // X3DH Section 3.3. https://signal.org/docs/specifications/x3dh/
     // We'll handle the possible one-time prekey below
     const ecRes = await Promise.all([
-      Internal.crypto.ECDHE(IKa, SPKb.privKey),
-      Internal.crypto.ECDHE(EKa, IKb.privKey),
-      Internal.crypto.ECDHE(EKa, SPKb.privKey),
+      Internal.crypto.ECDHE(uint8ArrayToArrayBuffer(IKa), SPKb.privKey),
+      Internal.crypto.ECDHE(uint8ArrayToArrayBuffer(EKa), IKb.privKey),
+      Internal.crypto.ECDHE(uint8ArrayToArrayBuffer(EKa), SPKb.privKey),
     ])
 
     sharedSecret.set(new Uint8Array(ecRes[0]), 32)
@@ -201,7 +203,7 @@ export class SessionBuilder {
     sharedSecret.set(new Uint8Array(ecRes[2]), 32 * 3)
 
     if (OPKb) {
-      const ecRes4 = await Internal.crypto.ECDHE(EKa, OPKb.privKey)
+      const ecRes4 = await Internal.crypto.ECDHE(uint8ArrayToArrayBuffer(EKa), OPKb.privKey)
       sharedSecret.set(new Uint8Array(ecRes4), 32 * 4)
     }
 
@@ -211,11 +213,11 @@ export class SessionBuilder {
       registrationId: message.registrationId,
       currentRatchet: {
         rootKey: masterKey[0],
-        lastRemoteEphemeralKey: EKa,
+        lastRemoteEphemeralKey: uint8ArrayToArrayBuffer(EKa),
         previousCounter: 0,
       },
       indexInfo: {
-        remoteIdentityKey: IKa,
+        remoteIdentityKey: uint8ArrayToArrayBuffer(IKa),
         closed: -1,
       },
       oldRatchetList: [],
@@ -225,7 +227,7 @@ export class SessionBuilder {
     // If we're initiating we go ahead and set our first sending ephemeral key now,
     // otherwise we figure it out when we first maybeStepRatchet with the remote's ephemeral key
 
-    session.indexInfo.baseKey = EKa
+    session.indexInfo.baseKey = uint8ArrayToArrayBuffer(EKa)
     session.indexInfo.baseKeyType = BaseKeyType.THEIRS
     session.currentRatchet.ephemeralKeyPair = SPKb
 
@@ -264,7 +266,7 @@ export class SessionBuilder {
     return SessionLock.queueJobForNumber(this.remoteAddress.toString(), runJob)
   }
 
-  async processV3(record: SessionRecord, message: PreKeyWhisperMessage): Promise<number | void> {
+  async processV3(record: SessionRecord, message: PreKeyWhisperMessage): Promise<{ session: SessionType; preKeyId?: number; }> {
     if (!message.identityKey || !message.baseKey) {
       throw new Error("Invalid PreKey message")
     }
@@ -287,39 +289,51 @@ export class SessionBuilder {
       throw new Error('Missing Signed PreKey for PreKeyWhisperMessage')
     }
 
-    if (record.getSessionByBaseKey(message.baseKey)) {
+    const existingSession = record.getSessionByBaseKey(uint8ArrayToArrayBuffer(message.baseKey))
 
-      return message.preKeyId
-
-    }
-
-    const session = record.getOpenSession()
-
-    if (signedPreKeyPair === undefined) {
-      // Session may or may not be the right one, but if its not, we
-      // can't do anything about it ...fall through and let
-      // decryptWhisperMessage handle that case
-      if (session !== undefined && session.currentRatchet !== undefined) {
-        return
-      } else {
-        throw new Error('Missing Signed PreKey for PreKeyWhisperMessage')
+    if (existingSession) {
+      return {
+        session: existingSession,
+        preKeyId: message.preKeyId
       }
     }
-    if (session !== undefined) {
-      record.archiveCurrentState()
+    // const session = record.getOpenSession()
+
+    // if (signedPreKeyPair === undefined) {
+    //   // Session may or may not be the right one, but if its not, we
+    //   // can't do anything about it ...fall through and let
+    //   // decryptWhisperMessage handle that case
+    //   if (session !== undefined && session.currentRatchet !== undefined) {
+    //     return 
+    //   } else {
+    //     throw new Error('Missing Signed PreKey for PreKeyWhisperMessage')
+    //   }
+    // }
+
+    if (!signedPreKeyPair) {
+      throw new Error('Missing Signed PreKey for PreKeyWhisperMessage')
     }
+    //MYUPDATE
+    //moved this after decrypt
+    // if (session !== undefined) {
+    //   record.archiveCurrentState()
+    // }
     if (message.preKeyId && !preKeyPair) {
       // console.log('Invalid prekey id', message.preKeyId)
       throw new Error("Missing OPK for incoming message")
     }
 
     const new_session = await this.startSessionWthPreKeyMessage(preKeyPair, signedPreKeyPair, message)
-    record.updateSessionState(new_session)
-    await this.storage.saveIdentity(this.remoteAddress.toString(), uint8ArrayToArrayBuffer(message.identityKey))
-
-    if (message.preKeyId !== undefined) {
-      await this.storage.removePreKey(message.preKeyId)
+    // record.updateSessionState(new_session)
+    // await this.storage.saveIdentity(this.remoteAddress.toString(), uint8ArrayToArrayBuffer(message.identityKey))
+    //
+    // if (message.preKeyId !== undefined) {
+    //   await this.storage.removePreKey(message.preKeyId)
+    // }
+    // return message.preKeyId
+    return {
+      session: new_session,
+      preKeyId: message.preKeyId
     }
-    return message.preKeyId
   }
 }

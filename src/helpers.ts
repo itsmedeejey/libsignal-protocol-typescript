@@ -46,9 +46,8 @@ export function isEqual(a: ArrayBuffer | undefined, b: ArrayBuffer | undefined):
 
 export function uint8ArrayToArrayBuffer(arr: Uint8Array): ArrayBuffer {
   //return arr.buffer.slice(arr.byteOffset, arr.byteLength + arr.byteOffset) //original one 
-  //return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength)
+  return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength)
 
-  return new Uint8Array(arr).buffer // avoids SharedArrayBuffer issues 
 
 
 }
