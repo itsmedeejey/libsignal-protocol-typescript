@@ -67,7 +67,7 @@ export class SessionBuilder {
     record.updateSessionState(session)
     await Promise.all([
       this.storage.storeSession(address, record.serialize()),
-      this.storage.saveIdentity(this.remoteAddress.name, session.indexInfo.remoteIdentityKey),
+      this.storage.saveIdentity(this.remoteAddress.toString(), session.indexInfo.remoteIdentityKey),
     ])
 
     return session
@@ -266,7 +266,7 @@ export class SessionBuilder {
     return SessionLock.queueJobForNumber(this.remoteAddress.toString(), runJob)
   }
 
-  async processV3(record: SessionRecord, message: PreKeyWhisperMessage): Promise<{ session: SessionType; preKeyId?: number; }> {
+  async processV3(record: SessionRecord, message: PreKeyWhisperMessage): Promise<{ session: SessionType; preKeyId: number; identityKey: ArrayBuffer }> {
     if (!message.identityKey || !message.baseKey) {
       throw new Error("Invalid PreKey message")
     }
@@ -294,7 +294,8 @@ export class SessionBuilder {
     if (existingSession) {
       return {
         session: existingSession,
-        preKeyId: message.preKeyId
+        preKeyId: message.preKeyId,
+        identityKey
       }
     }
     // const session = record.getOpenSession()
@@ -333,7 +334,8 @@ export class SessionBuilder {
     // return message.preKeyId
     return {
       session: new_session,
-      preKeyId: message.preKeyId
+      preKeyId: message.preKeyId,
+      identityKey
     }
   }
 }

@@ -99,7 +99,7 @@ export class SessionCipher {
     // saveIdentity is awaited 
     await Promise.all([
       this.storage.saveIdentity(
-        this.remoteAddress.getName(),
+        this.remoteAddress.toString(),
         session.indexInfo.remoteIdentityKey
       ),
       this.storage.storeSession(address, serialized)
@@ -247,22 +247,31 @@ export class SessionCipher {
         record = new SessionRecord() // (preKeyProto.registrationId)???
       }
       const builder = new SessionBuilder(this.storage, this.remoteAddress)
+      const baseKey = uint8ArrayToArrayBuffer(preKeyProto.baseKey)
+      const existingSession = record.getSessionByBaseKey(baseKey)
 
       // isTrustedIdentity is called within processV3, no need to call it here
 
-      // MYUPDATE: processV3 is returning the session and preKeyId without storing them first
+      // MYUPDATE: processV3 is returning the  preKeyId without storing them first
       // we will store it if the message is decrypted 
       // WHY?  processV3() calls record.updateSessionState(), saveIdentity(), and removePreKey() before the
       // embedded WhisperMessage is even structurally validated, MAC-checked, or decrypted.
       // Impact: a single forged/malformed pre-key packet can consume Bob’s OPK and pin an arbitrary first-contact
       // identity for remoteAddress, causing persistent DoS/TOFU poisoning. I reproduced this: decrypt failed, but the
       // identity was saved and the OPK was gone.
-      const result = await builder.processV3(record, preKeyProto)
 
-      if (!result) {
-        throw new Error("Failed to process PreKey message")
+      // const preKeyId = await builder.processV3(record, preKeyProto)
+      // const session = record.getSessionByBaseKey(
+      //   uint8ArrayToArrayBuffer(preKeyProto.baseKey)
+      // )
+      //
+      const { session, preKeyId, identityKey } = await builder.processV3(record, preKeyProto)
+
+
+      if (!session) {
+        throw new Error("session missing after processV3")
       }
-      const { session, preKeyId } = result;
+
 
       // if (!session) {
       //   throw new Error(
@@ -274,10 +283,19 @@ export class SessionCipher {
 
       const plaintext = await this.doDecryptWhisperMessage(preKeyProto.message, session)
 
-      record.archiveCurrentState()
+      if (!existingSession && record.getOpenSession()) {
+        record.archiveCurrentState()
+      }
+
       record.updateSessionState(session)
 
-      await this.storage.saveIdentity(this.remoteAddress.name, session.indexInfo.remoteIdentityKey)
+      const savedIdentityKey = identityKey // ?? session.indexInfo.remoteIdentityKey
+
+      if (!savedIdentityKey) {
+        throw new Error("identityKey is missing")
+
+      }
+      await this.storage.saveIdentity(this.remoteAddress.toString(), savedIdentityKey)
       await this.storage.storeSession(address, record.serialize())
       if (preKeyId !== undefined && preKeyId !== null) {
         await this.storage.removePreKey(preKeyId)
@@ -347,7 +365,7 @@ export class SessionCipher {
         throw new Error('Identity key changed')
       }
 
-      await this.storage.saveIdentity(this.remoteAddress.name, result.session.indexInfo.remoteIdentityKey)
+      await this.storage.saveIdentity(this.remoteAddress.toString(), result.session.indexInfo.remoteIdentityKey)
       record.updateSessionState(result.session)
       await this.storage.storeSession(address, record.serialize())
 

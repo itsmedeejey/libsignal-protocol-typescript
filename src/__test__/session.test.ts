@@ -84,7 +84,7 @@ describe('session establishment', () => {
         expect(cryptoContext.ecdhe).toHaveBeenCalled()
     })
 
-    test('processV3 consumes the receiver OPK and records the inbound session state', async () => {
+    test('processV3 derives the inbound session and defers persistence until decrypt succeeds', async () => {
         const alice = await createUser('alice-process-v3')
         const bob = await createUser('bob-process-v3')
         const bundleFixture = await generatePreKeyBundle(bob, { preKeyId: 12, signedPreKeyId: 1012 })
@@ -99,17 +99,19 @@ describe('session establishment', () => {
 
         const record = new SessionRecord()
         const bobBuilder = createSessionBuilder(bob, alice)
-        const consumedPreKeyId = await bobBuilder.processV3(record, preKeyMessage)
-        const bobSession = record.getSessionByBaseKey(uint8ArrayToArrayBuffer(preKeyMessage.baseKey))
+        const result = await bobBuilder.processV3(record, preKeyMessage)
+        const bobSession = result.session
 
-        expect(consumedPreKeyId).toBe(bundleFixture.preKeyId)
-        expect(bobSession).toBeDefined()
-        expect(arrayBufferEquals(bobSession!.indexInfo.remoteIdentityKey, alice.identityKeyPair.pubKey)).toBe(true)
+        expect(result.preKeyId).toBe(bundleFixture.preKeyId)
+        expect(result.identityKey).toBeDefined()
+        expect(record.getSessionByBaseKey(uint8ArrayToArrayBuffer(preKeyMessage.baseKey))).toBeUndefined()
+        expect(arrayBufferEquals(result.identityKey!, alice.identityKeyPair.pubKey)).toBe(true)
+        expect(arrayBufferEquals(bobSession.indexInfo.remoteIdentityKey, alice.identityKeyPair.pubKey)).toBe(true)
         expect(arrayBufferEquals(aliceSession.pendingPreKey!.baseKey, uint8ArrayToArrayBuffer(preKeyMessage.baseKey))).toBe(
             true
         )
-        expect(bob.store.hasPreKey(bundleFixture.preKeyId!)).toBe(false)
-        expect(bob.store.getPreKeyDeleteCount(bundleFixture.preKeyId!)).toBe(1)
+        expect(bob.store.hasPreKey(bundleFixture.preKeyId!)).toBe(true)
+        expect(bob.store.getPreKeyDeleteCount(bundleFixture.preKeyId!)).toBe(0)
     })
 
     test('full pre-key establishment persists and reloads across new SessionCipher instances', async () => {
